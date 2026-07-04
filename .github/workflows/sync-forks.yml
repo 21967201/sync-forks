@@ -1,0 +1,101 @@
+name: Sync Forks
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (no actual sync)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync all forked repos
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        run: |
+          echo "=== Fork Sync Started at $(date -u) ==="
+          echo ""
+
+          declare -A FORKS=(
+            [openclaw]="openclaw/openclaw"
+            [A-Worker-Panel]="bia-pain-bache/BPB-Worker-Panel"
+            [MoonTV]="samqin123/MoonTV"
+            [opengemini]="PublicAffairs/openai-gemini"
+            [AI-Worker-Proxy]="zxcloli666/AI-Worker-Proxy"
+            [cng]="noizo/cng"
+            [LunaTV]="MoonTechLab/LunaTV"
+            [Cloudflare-vless-trojan]="yonggekkk/Cloudflare-vless-trojan"
+            [aisentia]="pushpendradwivedi/aisentia"
+            [note-gen]="codexu/note-gen"
+            [1688-Scraper-MCP]="xiayumu034-crypto/1688-Scraper-MCP"
+            [E5_Developer_Renew]="KKtheGhost/E5_Developer_Renew"
+            [cloudflare-hono-starter]="TyposBro/cloudflare-hono-starter"
+            [MCP-Server-Framework]="MP-Tool/mcp-server-framework"
+          )
+
+          SUCCESS=0
+          FAIL=0
+          SKIP=0
+
+          for repo in "${!FORKS[@]}"; do
+            upstream="${FORKS[$repo]}"
+            echo "--- Syncing 21967201/$repo ← $upstream ---"
+
+            is_fork=$(gh api "repos/21967201/$repo" --jq '.fork')
+            if [ "$is_fork" != "true" ]; then
+              echo "  ⏭ Not a fork, skipping"
+              ((SKIP++))
+              continue
+            fi
+
+            default_branch=$(gh api "repos/21967201/$repo" --jq '.default_branch')
+            echo "  Default branch: $default_branch"
+
+            behind=$(gh api "repos/21967201/$repo/compare/$upstream:$default_branch...$default_branch" --jq '.behind_by // 0' 2>/dev/null || echo "0")
+            echo "  Behind upstream by: $behind commits"
+
+            if [ "$behind" -eq 0 ]; then
+              echo "  ✅ Already up to date"
+              ((SKIP++))
+              continue
+            fi
+
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "  🔍 Dry run: would sync $behind commits"
+              ((SKIP++))
+              continue
+            fi
+
+            if gh api -X POST "repos/21967201/$repo/merge-upstream" -f branch="$default_branch" 2>&1; then
+              echo "  ✅ Synced successfully ($behind commits)"
+              ((SUCCESS++))
+            else
+              echo "  ❌ Sync failed (may have conflicts)"
+              ((FAIL++))
+            fi
+          done
+
+          echo ""
+          echo "=== Sync Summary ==="
+          echo "  Synced: $SUCCESS"
+          echo "  Failed: $FAIL"
+          echo "  Skipped: $SKIP"
+          echo "  Total: $((SUCCESS + FAIL + SKIP))"
+
+          if [ "$FAIL" -gt 0 ]; then
+            echo ""
+            echo "⚠ Some repos failed to sync. Manual intervention required."
+          fi
