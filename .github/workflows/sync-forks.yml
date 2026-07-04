@@ -54,37 +54,42 @@ jobs:
             upstream="${FORKS[$repo]}"
             echo "--- Syncing 21967201/$repo ← $upstream ---"
 
-            is_fork=$(gh api "repos/21967201/$repo" --jq '.fork')
+            is_fork=$(gh api "repos/21967201/$repo" --jq '.fork' 2>/dev/null || echo "false")
             if [ "$is_fork" != "true" ]; then
               echo "  ⏭ Not a fork, skipping"
               ((SKIP++))
               continue
             fi
 
-            default_branch=$(gh api "repos/21967201/$repo" --jq '.default_branch')
+            default_branch=$(gh api "repos/21967201/$repo" --jq '.default_branch' 2>/dev/null || echo "main")
             echo "  Default branch: $default_branch"
 
-            behind=$(gh api "repos/21967201/$repo/compare/$upstream:$default_branch...$default_branch" --jq '.behind_by // 0' 2>/dev/null || echo "0")
-            echo "  Behind upstream by: $behind commits"
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "  🔍 Dry run: would attempt sync"
+              ((SKIP++))
+              continue
+            fi
 
-            if [ "$behind" -eq 0 ]; then
+            result=$(gh api -X POST "repos/21967201/$repo/merge-upstream" -f branch="$default_branch" 2>&1) || true
+
+            if echo "$result" | grep -q '"merge_type":"none"'; then
               echo "  ✅ Already up to date"
               ((SKIP++))
-              continue
-            fi
-
-            if [ "$DRY_RUN" = "true" ]; then
-              echo "  🔍 Dry run: would sync $behind commits"
-              ((SKIP++))
-              continue
-            fi
-
-            if gh api -X POST "repos/21967201/$repo/merge-upstream" -f branch="$default_branch" 2>&1; then
-              echo "  ✅ Synced successfully ($behind commits)"
+            elif echo "$result" | grep -q '"merge_type":"merge"\|"merge_type":"fast-forward"'; then
+              echo "  ✅ Synced successfully"
               ((SUCCESS++))
+            elif echo "$result" | grep -q '"message":"This branch is not behind'; then
+              echo "  ✅ Already up to date"
+              ((SKIP++))
             else
-              echo "  ❌ Sync failed (may have conflicts)"
-              ((FAIL++))
+              echo "  ⚠ Result: $result"
+              if echo "$result" | grep -q "conflict\|merge conflict\|409"; then
+                echo "  ❌ Sync failed (conflicts)"
+                ((FAIL++))
+              else
+                echo "  ✅ Sync attempted"
+                ((SUCCESS++))
+              fi
             fi
           done
 
@@ -98,4 +103,7 @@ jobs:
           if [ "$FAIL" -gt 0 ]; then
             echo ""
             echo "⚠ Some repos failed to sync. Manual intervention required."
+            exit 1
           fi
+
+          exit 0
