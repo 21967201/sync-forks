@@ -23,7 +23,7 @@ jobs:
     steps:
       - name: Sync all forked repos
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
         run: |
           echo "=== Fork Sync Started at $(date -u) ==="
